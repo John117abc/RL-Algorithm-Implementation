@@ -2,25 +2,33 @@ from typing import Optional
 import numpy as np
 import gymnasium as gym
 
+import numpy as np
+import gymnasium as gym
+from typing import Optional, List, Tuple
+
 
 class GridWorldEnv(gym.Env):
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}  # 声明支持的模式
-    def __init__(self, size: int = 5,render_mode: str = None):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    def __init__(self, size: int = 5, render_mode: str = None, obstacle_count: int = 0):
         # 显示
         self.render_mode = render_mode
         # 网格空间的大小 (默认 5*5)
         self.size = size
-
+        # 障碍物数量
+        self.obstacle_count = min(obstacle_count, size * size - 2)  # 确保障碍物不会占满整个网格
         # 初始化位置
         # -1, -1未初始化的状态
         self._agent_location = np.array([-1, -1], dtype=np.int32)
         self._target_location = np.array([-1, -1], dtype=np.int32)
+        # 障碍物位置列表
+        self._obstacle_locations = []
 
         # 定义智能体可以观察的内容
         # {"agent": array([1, 0]), "target": array([0, 3])}，其中数组表示 x、y坐标
         self.observation_space = gym.spaces.Dict(
             {
-                "agent": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),   # [x, y] coordinates
+                "agent": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),  # [x, y] coordinates
                 "target": gym.spaces.Box(0, size - 1, shape=(2,), dtype=int),  # [x, y] coordinates
             }
         )
@@ -30,8 +38,8 @@ class GridWorldEnv(gym.Env):
 
         # 将动作编号映射到网格上的实际移动
         self._action_to_direction = {
-            0: np.array([1, 0]),   # 右移 (positive x)
-            1: np.array([0, 1]),   # 上移 (positive y)
+            0: np.array([1, 0]),  # 右移 (positive x)
+            1: np.array([0, 1]),  # 上移 (positive y)
             2: np.array([-1, 0]),  # 左移 (negative x)
             3: np.array([0, -1]),  # 下移 (negative y)
         }
@@ -39,6 +47,40 @@ class GridWorldEnv(gym.Env):
         # 可选：为渲染准备窗口（延迟初始化）
         self.window = None
         self.clock = None
+
+    def _generate_obstacles(self):
+        """生成不与起点和终点重叠的障碍物"""
+        self._obstacle_locations = []
+
+        # 为障碍物创建一个可用位置列表
+        all_positions = [(x, y) for x in range(self.size) for y in range(self.size)]
+        available_positions = all_positions.copy()
+
+        # 如果已经设置了agent和target位置，从可用位置中移除它们
+        if not np.array_equal(self._agent_location, np.array([-1, -1])):
+            available_positions.remove(tuple(self._agent_location))
+        if not np.array_equal(self._target_location, np.array([-1, -1])):
+            if tuple(self._target_location) in available_positions:
+                available_positions.remove(tuple(self._target_location))
+
+        # 随机选择障碍物位置
+        num_obstacles = min(self.obstacle_count, len(available_positions))
+        if num_obstacles > 0:
+            obstacle_indices = self.np_random.choice(
+                len(available_positions),
+                num_obstacles,
+                replace=False
+            )
+            for idx in obstacle_indices:
+                pos = available_positions[idx]
+                self._obstacle_locations.append(np.array(pos, dtype=np.int32))
+
+    def _is_obstacle(self, position: np.ndarray) -> bool:
+        """检查给定位置是否为障碍物"""
+        for obs in self._obstacle_locations:
+            if np.array_equal(position, obs):
+                return True
+        return False
 
     def _get_obs(self):
         """将内部状态转换为观测格式。
@@ -57,7 +99,8 @@ class GridWorldEnv(gym.Env):
         return {
             "distance": np.linalg.norm(
                 self._agent_location - self._target_location, ord=1
-            )
+            ),
+            "obstacles": self._obstacle_locations.copy()  # 添加障碍物信息到info
         }
 
     def reset(self, seed: Optional[int] = None, options: Optional[dict] = None):
@@ -65,30 +108,40 @@ class GridWorldEnv(gym.Env):
 
         Args:
             seed: 用于生成可复现事件的随机种子
-            options: A其它配置
+            options: 其它配置
 
         Returns:
             tuple: （观察，信息）初始状态
         """
-        # 如果不需要随机初始位置，获取options的enable_random_pos
-        if options['enable_random_pos']:
-            # 注意: 必须先调用此函数来初始化随机数生成器。
-            super().reset(seed=seed)
+        # 处理options参数，如果没有提供则设置默认值
+        if options is None:
+            options = {'enable_random_pos': True}
+        elif 'enable_random_pos' not in options:
+            options['enable_random_pos'] = True
 
+        # 必须先调用此函数来初始化随机数生成器。
+        super().reset(seed=seed)
+
+        if options['enable_random_pos']:
             # 将智能体随机放置在网格上的任意位置
             self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
-            # 随机放置目标，确保其位置与智能体位置不同。
-            self._target_location = self._agent_location
+
+            # 随机放置目标，确保其位置与智能体位置不同
+            self._target_location = self._agent_location.copy()
             while np.array_equal(self._target_location, self._agent_location):
                 self._target_location = self.np_random.integers(
                     0, self.size, size=2, dtype=int
                 )
         else:
-            self._agent_location = np.array([0,0])
-            self._target_location = np.array([self.size -1,self.size -1])
+            self._agent_location = np.array([0, 0])
+            self._target_location = np.array([self.size - 1, self.size - 1])
+
+        # 生成障碍物，确保它们不与起点和终点重叠
+        self._generate_obstacles()
 
         observation = self._get_obs()
         info = self._get_info()
+
         return observation, info
 
     def step(self, action):
@@ -103,11 +156,19 @@ class GridWorldEnv(gym.Env):
         # 将离散动作（0-3）映射到运动方向
         direction = self._action_to_direction[action]
 
-        # 更新智能体位置，确保其保持在网格边界内。
-        # np.clip 防止智能体走到边缘之外
+        # 保存旧位置
+        # old_location = self._agent_location.copy()
+
+        # 更新智能体位置，确保其保持在网格边界内
         self._agent_location = np.clip(
             self._agent_location + direction, 0, self.size - 1
         )
+
+        # 检查新位置是否是障碍物
+        hit_obstacle = self._is_obstacle(self._agent_location)
+        # 如果撞到障碍物，回到原来的位置
+        # if hit_obstacle:
+        #     self._agent_location = old_location.copy()
 
         # 检查智能体是否到达目标
         terminated = np.array_equal(self._agent_location, self._target_location)
@@ -115,13 +176,16 @@ class GridWorldEnv(gym.Env):
         # 在这个简单的环境中，我们不使用截断。（如果需要，可以在此处添加步数限制）
         truncated = False
 
-        # 简单的奖励机制：达到目标加 10 分，否则不加 -1 分
-        # 另一种方法：可以对每一步操作给予少量负奖励，以鼓励提高效率。
-        reward = 10 if terminated else -1
-
-        # 也可以对距离塑造奖励
-        # distance = np.linalg.norm(self._agent_location - self._target_location)
-        # reward = 1 if terminated else -0.1 * distance
+        # 奖励机制：
+        # - 如果到达目标，+10分
+        # - 如果撞到障碍物，-5分
+        # - 否则，-1分
+        if terminated:
+            reward = 10
+        elif hit_obstacle:
+            reward = -5
+        else:
+            reward = -1
 
         observation = self._get_obs()
         info = self._get_info()
@@ -139,14 +203,13 @@ class GridWorldEnv(gym.Env):
             self._render_frame()
             # 如果使用 pygame，human 模式会自动显示窗口
         else:
-            # render_mode is None or unsupported
             return None
 
     def _render_frame(self):
         try:
             import pygame
         except ImportError as e:
-            raise ImportError("pygame is required...") from e
+            raise ImportError("pygame is required for rendering") from e
 
         # 动态计算 cell_size，确保窗口不超过 max_window_size
         max_window_size = 800
@@ -166,8 +229,42 @@ class GridWorldEnv(gym.Env):
         # 绘制网格（可选：仅当 cell_size >= 3 时画线，避免太密）
         if cell_size >= 3:
             for i in range(self.size + 1):
-                pygame.draw.line(canvas, (200, 200, 200), (0, i * cell_size), (window_size, i * cell_size))
-                pygame.draw.line(canvas, (200, 200, 200), (i * cell_size, 0), (i * cell_size, window_size))
+                pygame.draw.line(
+                    canvas,
+                    (200, 200, 200),
+                    (0, i * cell_size),
+                    (window_size, i * cell_size)
+                )
+                pygame.draw.line(
+                    canvas,
+                    (200, 200, 200),
+                    (i * cell_size, 0),
+                    (i * cell_size, window_size)
+                )
+
+        # 绘制障碍物（黄色）
+        for obs in self._obstacle_locations:
+            ox, oy = obs
+            pygame.draw.rect(
+                canvas,
+                (255, 255, 0),  # 黄色
+                pygame.Rect(oy * cell_size, ox * cell_size, cell_size, cell_size),
+            )
+            # 可选：在障碍物上添加一个"X"标记
+            pygame.draw.line(
+                canvas,
+                (0, 0, 0),
+                (oy * cell_size, ox * cell_size),
+                ((oy + 1) * cell_size, (ox + 1) * cell_size),
+                max(1, cell_size // 5)
+            )
+            pygame.draw.line(
+                canvas,
+                (0, 0, 0),
+                ((oy + 1) * cell_size, ox * cell_size),
+                (oy * cell_size, (ox + 1) * cell_size),
+                max(1, cell_size // 5)
+            )
 
         # 绘制目标 T（绿色方块）
         tx, ty = self._target_location
@@ -176,12 +273,27 @@ class GridWorldEnv(gym.Env):
             (0, 255, 0),
             pygame.Rect(ty * cell_size, tx * cell_size, cell_size, cell_size),
         )
+        # 可选：在目标位置添加文字"T"
+        if cell_size >= 15:
+            font = pygame.font.SysFont(None, max(10, cell_size))
+            text = font.render('T', True, (0, 0, 0))
+            text_rect = text.get_rect(center=(
+                ty * cell_size + cell_size // 2,
+                tx * cell_size + cell_size // 2
+            ))
+            canvas.blit(text, text_rect)
 
         # 绘制智能体 A（蓝色圆圈）
         ax, ay = self._agent_location
         center = (ay * cell_size + cell_size // 2, ax * cell_size + cell_size // 2)
         radius = max(1, cell_size // 3)
         pygame.draw.circle(canvas, (0, 0, 255), center, radius)
+        # 可选：在智能体位置添加文字"A"
+        if cell_size >= 15:
+            font = pygame.font.SysFont(None, max(10, cell_size))
+            text = font.render('A', True, (255, 255, 255))
+            text_rect = text.get_rect(center=center)
+            canvas.blit(text, text_rect)
 
         if self.render_mode == "human":
             self.window.blit(canvas, (0, 0))
