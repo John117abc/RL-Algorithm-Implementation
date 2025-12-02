@@ -23,7 +23,8 @@ class GridWorldEnv(gym.Env):
         self._target_location = np.array([-1, -1], dtype=np.int32)
         # 障碍物位置列表
         self._obstacle_locations = []
-
+        # 创建一个独立于 Gym 种子的随机数生成器，用于智能体起点
+        self._agent_start_rng = np.random.default_rng()  # 无种子 → 真随机
         # 定义智能体可以观察的内容
         # {"agent": array([1, 0]), "target": array([0, 3])}，其中数组表示 x、y坐标
         self.observation_space = gym.spaces.Dict(
@@ -119,30 +120,21 @@ class GridWorldEnv(gym.Env):
         elif 'enable_random_pos' not in options:
             options['enable_random_pos'] = True
 
-        # 必须先调用此函数来初始化随机数生成器。
-        super().reset(seed=seed)
+        super().reset(seed=seed)  # 这会影响 self.np_random（用于障碍物/终点）
 
         if options['enable_random_pos']:
-            # 将智能体随机放置在网格上的任意位置
-            self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
-
-            # 随机放置目标，确保其位置与智能体位置不同
+            self._agent_location = self._agent_start_rng.integers(0, self.size, size=2, dtype=int)
+            # 目标仍用 self.np_random（可复现）
             self._target_location = self._agent_location.copy()
             while np.array_equal(self._target_location, self._agent_location):
-                self._target_location = self.np_random.integers(
-                    0, self.size, size=2, dtype=int
-                )
+                self._target_location = self.np_random.integers(0, self.size, size=2, dtype=int)
         else:
             self._agent_location = np.array([0, 0])
             self._target_location = np.array([self.size - 1, self.size - 1])
 
-        # 生成障碍物，确保它们不与起点和终点重叠
-        self._generate_obstacles()
+        self._generate_obstacles()  # 障碍物用 self.np_random → 可复现
 
-        observation = self._get_obs()
-        info = self._get_info()
-
-        return observation, info
+        return self._get_obs(), self._get_info()
 
     def step(self, action):
         """在环境中执行一个时间步。
