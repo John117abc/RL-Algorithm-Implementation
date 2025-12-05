@@ -1,7 +1,3 @@
-from typing import Optional
-import numpy as np
-import gymnasium as gym
-
 import numpy as np
 import gymnasium as gym
 from typing import Optional, List, Tuple
@@ -147,9 +143,8 @@ class GridWorldEnv(gym.Env):
         """
         # 将离散动作（0-3）映射到运动方向
         direction = self._action_to_direction[action]
-
         # 保存旧位置
-        # old_location = self._agent_location.copy()
+        old_location = self._agent_location.copy()
 
         # 更新智能体位置，确保其保持在网格边界内
         self._agent_location = np.clip(
@@ -158,9 +153,11 @@ class GridWorldEnv(gym.Env):
 
         # 检查新位置是否是障碍物
         hit_obstacle = self._is_obstacle(self._agent_location)
-        # 如果撞到障碍物，回到原来的位置
-        # if hit_obstacle:
-        #     self._agent_location = old_location.copy()
+        # 检查新位置是否是障碍物
+        hit_obstacle = self._is_obstacle(self._agent_location)
+        if hit_obstacle:
+            self._agent_location = old_location  # 碰撞后回退
+            reward = -0.5  # 降低惩罚，避免过度负向信号
 
         # 检查智能体是否到达目标
         terminated = np.array_equal(self._agent_location, self._target_location)
@@ -173,11 +170,11 @@ class GridWorldEnv(gym.Env):
         # - 如果撞到障碍物，-5分
         # - 否则，-1分
         if terminated:
-            reward = 10
+            reward = 10.0  # 显著提高目标奖励
         elif hit_obstacle:
-            reward = -5
+            reward = -0.5  # 降低障碍惩罚（已回退位置）
         else:
-            reward = -1
+            reward = -0.01  # 保持小惩罚
 
         observation = self._get_obs()
         info = self._get_info()

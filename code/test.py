@@ -1,38 +1,9 @@
-import time
+import numpy as np
 import torch
-import random
 from torch import nn
+from collections import deque
 from rl_utils.GNGridWorldEnv import GridWorldEnv
 
-# 定义神经网络
-class NeuralNetwork(nn.Module):
-    def __init__(self, input_dim=2, hidden_dim=128, output_dim=4):
-        super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
-        )
-
-    def forward(self, x):
-        return self.network(x)
-
-# 设置环境
-grid_world_size = 10
-obstacle_count = 20
-test_env = GridWorldEnv(size=grid_world_size, render_mode='human', obstacle_count=obstacle_count)
-n_actions = test_env.action_space.n
-
-epsilon_min = 0.01  # 最小探索率
-
-# 测试学习到的策略
-print("\n正在用学习到的策略运行测试 episode...")
-observation, _ = test_env.reset(seed=99,options={'enable_random_pos': True})
-state = observation['agent'] / grid_world_size
-done = False
-total_reward = 0
 # 设备选择
 device = (
     "cuda" if torch.cuda.is_available()
@@ -40,32 +11,128 @@ device = (
     else "cpu"
 )
 print(f"使用设备: {device}")
-# ε-Greedy动作选择
-def select_action_test(state, epsilon):
-    if random.random() < epsilon:
-        return random.randint(0, n_actions-1)
 
-    state_tensor = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-    with torch.no_grad():
-        q_values = predict_network(state_tensor)
-    return torch.argmax(q_values).item()
 
-# 加载模型参数
-model_path = '../data/deep-q-learning/dqn-model.pth'
-print(f"正在从 {model_path} 加载模型...")
-params = torch.load(model_path, map_location=device)
+# 定义神经网络
+class PolicyNetwork(nn.Module):
+    def __init__(self, state_dim,hidden_dim ,action_dim):
+        super(PolicyNetwork, self).__init__()
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, action_dim)  # 输出动作概率
 
-predict_network = NeuralNetwork(input_dim=2,hidden_dim=1024, output_dim=4).to(device)
-predict_network.load_state_dict(params)
-predict_network.eval()  # 设置为评估模式
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        return torch.softmax(self.fc3(x), dim=-1)  # 输出概率分布
 
-while not done:
-    action = select_action_test(state, epsilon_min)  # 使用最小探索率
-    next_observation, reward, terminated, truncated, _ = test_env.step(action)
-    state = next_observation['agent'] / grid_world_size
-    total_reward += reward
-    done = terminated or truncated
-    time.sleep(0.3)
 
-print(f"测试 episode 总奖励: {total_reward:.2f}")
-test_env.close()
+class PolicyAgent:
+    def __init__(self,state_dim,hidden_dim,action_dim,lr = 0.01):
+        self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
+        self.action_dim = action_dim
+        self.lr = lr
+
+        # 初始化神经网络
+        self.model = PolicyNetwork(state_dim, hidden_dim, action_dim)
+        self.optimizer = torch.optim.Adam(self.model.parameters(),lr = lr)
+
+        self.gamma = 0.99
+        self.memory = deque()
+
+    # 使用神经网络输出概率分布，再使用贪心策略选择action
+    def select_action(self,state):
+        state = torch.tensor(state,dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            predict = self.model(state)
+        action = np.random.choice(self.action_dim,p=predict.squeeze().numpy())
+        return action
+
+    # 存储每一次action后得state,action,reward
+    def save_memory(self,state,action,reward):
+        self.memory.append((state,action,reward))
+
+    def calculate_returns(self):
+        returns = []
+        G = 0.0
+        # 从后往前遍历
+        for state, action, reward in reversed(self.memory):
+            G = reward + self.gamma * G
+            returns.insert(0, G)
+        return returns
+
+    # 更新策略
+    def update_policy(self):
+        if len(self.memory) == 0:
+            return  # 防止空经验更新
+        states, actions, rewards = zip(*self.memory)
+        returns = self.calculate_returns()
+
+        states = torch.tensor(states,dtype=torch.float32)
+        actions = torch.tensor(actions,dtype=torch.long)
+        returns = torch.tensor(returns,dtype=torch.float32)
+
+        # 取每一次被选择的那个动作的概率
+        choose = self.model(states)[torch.arange(len(states)), actions]
+        log = torch.log(choose + 1e-8)
+
+        # 定义损失函数，因为要做梯度上升，所以加上负号
+        loss_func = -(log * returns).mean()
+
+        self.optimizer.zero_grad()
+        loss_func.backward()
+        self.optimizer.step()
+
+# 设置环境
+grid_world_size = 10
+obstacle_count = 20
+env = GridWorldEnv(size=grid_world_size, obstacle_count=obstacle_count)
+n_actions = env.action_space.n
+
+# 训练循环
+global_step = 0
+episode_rewards = []
+
+
+# 使用策略梯度法进行训练
+agent = PolicyAgent(state_dim=2,hidden_dim=64,action_dim=4,lr = 0.0001)
+for episode in range(10000):
+    # 重置环境
+    observation, _ = env.reset(seed=99,options={'enable_random_pos': True})
+    state = observation['agent'] / (grid_world_size - 1 + 1e-8)  # 归一化到[0,1]
+    done = False
+    total_reward = 0
+    step_count = 0
+
+    while not done and step_count < 1000:  # 最大步数限制
+        # 选择动作
+        action = agent.select_action(state)
+
+        # 执行动作
+        next_observation, reward, terminated, truncated, _ = env.step(action)
+        next_state = next_observation['agent'] / (grid_world_size - 1 + 1e-8)
+        done = terminated or truncated
+
+        # 存储经验
+        agent.save_memory(state,action,reward)
+        # 更新状态
+        state = next_state
+        total_reward += reward
+        global_step += 1
+        step_count += 1
+
+    agent.update_policy()
+    agent.memory.clear()
+    # 更新探索率
+    episode_rewards.append(total_reward)
+
+    # 打印进度
+    if episode % 10 == 0:
+        avg_reward = np.mean(episode_rewards[-10:])
+        print(f"回合 {episode}, 平均奖励: {avg_reward:.2f}, 步数: {global_step}")
+
+env.close()
+
+# 保存模型
+torch.save(agent.model.state_dict(), '../data/value-function-method/vf-model.pth')
