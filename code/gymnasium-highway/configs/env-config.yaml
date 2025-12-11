@@ -1,0 +1,24 @@
+{
+    "observation": {
+        "type": "Kinematics"  # 运动学观察类型
+    },
+    "action": {
+        "type": "DiscreteMetaAction", # 离散型动作
+    },
+    "lanes_count": 4,   # 车道数
+    "vehicles_count": 50,   # 车辆数
+    "duration": 40,  # [s]  # 时间s
+    "initial_spacing": 2,   # 初始间距
+    "collision_reward": -1,  # 碰撞奖励
+    "reward_speed_range": [20, 30],  # [m/s] 从这个范围到最高速度的奖励呈线性关系 [0, HighwayEnv.HIGH_SPEED_REWARD].
+    "simulation_frequency": 15,  # [Hz] 模拟频率
+    "policy_frequency": 1,  # [Hz]  策略频率
+    "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",   # 其他车辆类型
+    "screen_width": 600,  # [px]  # 显示宽度
+    "screen_height": 150,  # [px] # 显示高度
+    "centering_position": [0.3, 0.5],   # 居中位置
+    "scaling": 5.5,   # 缩放
+    "show_trajectories": False,   # 显示轨迹
+    "render_agent": True,   # 渲染智能体
+    "offscreen_rendering": False    # 屏幕外渲染
+}
