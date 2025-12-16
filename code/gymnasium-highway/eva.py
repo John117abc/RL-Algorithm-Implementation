@@ -5,7 +5,7 @@ import torch
 
 from AgentHighway import AgentHighWay
 # render_mode="rgb_array",
-env = gym.make("highway-v0",render_mode="rgb_array",config={
+env = gym.make("merge-v0",render_mode="rgb_array",config={
         "observation": {
             "type": "Kinematics",
             "vehicles_count": 10,
@@ -22,13 +22,12 @@ env = gym.make("highway-v0",render_mode="rgb_array",config={
         "action": {
             "type": "DiscreteMetaAction", # 离散型动作
         },
-        "vehicles_density":1.5,
         "lanes_count": 4,   # 车道数
         "vehicles_count": 30,   # 车辆数
-        "duration": 1000,  # [s]  # 时间s
+        "duration": 200,  # [s]  # 时间s
         "initial_spacing": 2,   # 初始间距
-        "collision_reward": -10,  # 碰撞奖励
-        "reward_speed_range": [10, 50],  # [m/s] 从这个范围到最高速度的奖励呈线性关系 [0, HighwayEnv.HIGH_SPEED_REWARD].
+        "collision_reward": -1,  # 碰撞奖励
+        "reward_speed_range": [10, 30],  # [m/s] 从这个范围到最高速度的奖励呈线性关系 [0, HighwayEnv.HIGH_SPEED_REWARD].
         "simulation_frequency": 15,  # [Hz] 模拟频率
         "policy_frequency": 2,  # [Hz]  策略频率
         "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",   # 其他车辆类型
@@ -36,8 +35,8 @@ env = gym.make("highway-v0",render_mode="rgb_array",config={
         "screen_height": 150,  # [px] # 显示高度
         "centering_position": [0.3, 0.5],   # 居中位置
         "scaling": 5.5,   # 缩放
-        "show_trajectories": False,   # 显示轨迹
-        "render_agent": True,   # 渲染智能体
+        "show_trajectories": True,   # 显示轨迹
+        "render_agent": False,   # 渲染智能体
         "offscreen_rendering": False    # 屏幕外渲染
     })
 
@@ -53,9 +52,22 @@ def normalize_obs(obs):
 
 episode_rewards = []
 rollout_steps = 20
-# 使用策略梯度法进行训练
 agent = AgentHighWay(state_dim=70,value_output_dim=1,policy_lr=0.0001,value_lr=0.001)
-for episode in range(10000):
+
+# 选择设备
+device = next(agent.value_model.parameters()).device
+
+# 加载模型参数
+value_model_path = './data/highway-value.pth'
+policy_model_path = './data/highway-policy.pth'
+print(f"正在从加载模型参数...")
+value_params = torch.load(value_model_path, map_location=device)
+policy_params = torch.load(policy_model_path,map_location=device)
+
+agent.value_model.load_state_dict(value_params)
+agent.policy_model.load_state_dict(policy_params)
+
+for episode in range(200):
     obs, _ = env.reset()
     state = normalize_obs(obs)
     done = False
@@ -66,21 +78,8 @@ for episode in range(10000):
         env.render()
         action, log_prob, value = agent.select_action(state)
         next_state, reward, terminated, truncated, info = env.step(action)
-        # 新增：惩罚倒车或极低速
-        if info['speed'] < 10.0:  # 低于 10 m/s (~18 km/h) 就惩罚
-            reward -= 10.0
-        if info['speed'] < 0:  # 倒车重罚
-            reward -= 5.0
         done = terminated or truncated
-
-        agent.store_transition(state, action, reward, log_prob, value, done)
         state = normalize_obs(next_state)
-        actions_taken.append(action)
-        if len(agent.memory) == rollout_steps or done:
-            agent.update_policy()
-            agent.update_value()
-            agent.clean_mem()
-
         total_reward += reward
         step_count += 1
     # 打印终止原因
@@ -90,15 +89,4 @@ for episode in range(10000):
         print(f"  info={info}")  # highway-env 会在这里返回原因！
         print("Actions:", actions_taken[:20])  # 看前20步
 
-    # 打印进度
-    episode_rewards.append(total_reward)
-    if episode % 10 == 0:
-        avg_reward = np.mean(episode_rewards[-10:])
-        print(f"回合 {episode}, 平均奖励: {avg_reward:.2f}")
-
 env.close()
-# 存储训练参数
-
-print('开出存储训练参数')
-torch.save(agent.policy_model.state_dict(),'./data/highway-policy.pth')
-torch.save(agent.value_model.state_dict(),'./data/highway-value.pth')

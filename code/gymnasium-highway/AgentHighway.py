@@ -35,7 +35,7 @@ class ValueNetwork(nn.Module):
         return self.an3(x)
 
 class AgentHighWay:
-    def __init__(self,value_input_dim,value_output_dim,state_dim,
+    def __init__(self,value_output_dim,state_dim,
                  hidden_dim = 256,action_dim = 5,policy_lr = 0.01,value_lr = 0.01):
         self.advantage = None
         self.state_dim = state_dim
@@ -43,7 +43,7 @@ class AgentHighWay:
         self.action_dim = action_dim
         self.policy_lr = policy_lr
 
-        self.value_input_dim = value_input_dim
+        self.value_input_dim = state_dim
         self.value_output_dim = value_output_dim
         self.value_lr = value_lr
 
