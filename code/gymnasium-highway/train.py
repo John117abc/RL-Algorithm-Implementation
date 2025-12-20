@@ -25,7 +25,7 @@ env = gym.make("highway-v0",render_mode="rgb_array",config={
         "vehicles_density":1.5,
         "lanes_count": 4,   # 车道数
         "vehicles_count": 30,   # 车辆数
-        "duration": 1000,  # [s]  # 时间s
+        "duration": 200,  # [s]  # 时间s
         "initial_spacing": 2,   # 初始间距
         "collision_reward": -10,  # 碰撞奖励
         "reward_speed_range": [10, 50],  # [m/s] 从这个范围到最高速度的奖励呈线性关系 [0, HighwayEnv.HIGH_SPEED_REWARD].

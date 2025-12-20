@@ -84,9 +84,9 @@ class AgentHighWay:
         with torch.no_grad():
             logits = self.policy_model(state)
             value = self.value_model(state)
-        dist = torch.distributions.Categorical(logits=logits)   # # 直接传 logits，如果 logits = [0.1, 0.7, 0.2]，那么 dist 就是一个“以10%概率选0、70%选1、20%选2”的分布。
+        dist = torch.distributions.Categorical(logits=logits)   # 直接传 logits，如果 logits = [0.1, 0.7, 0.2]，那么 dist 就是一个“以10%概率选0、70%选1、20%选2”的分布。
         action = dist.sample()   # 从 dist 中随机采样一个动作。
-        log_prob = dist.log_prob(action)    # # 计算 刚刚采样出的 action 在该分布下的对数概率
+        log_prob = dist.log_prob(action)    # 计算刚刚采样出的 action 在该分布下的对数概率
         return action.item(), log_prob.item(), value.item()
 
     # 使用A2C算法更新策略
